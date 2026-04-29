@@ -16,6 +16,11 @@ interface Extension extends vscode.Extension<unknown> {
 
 export const ExtensionProviderId = 'extensions';
 
+type InstallExtensionCommandOptions = {
+  isApplicationScoped?: boolean;
+  profileLocation?: vscode.Uri;
+};
+
 export class ExtensionProvider implements DataProvider {
   readonly id = ExtensionProviderId;
   #extensionFolder: vscode.Uri;
@@ -77,10 +82,21 @@ export class ExtensionProvider implements DataProvider {
 
   private async installExtension(ext: string) {
     try {
-      await vscode.commands.executeCommand('workbench.extensions.installExtension', ext);
+      await vscode.commands.executeCommand('workbench.extensions.installExtension', ext, {
+        isApplicationScoped: false,
+        // Install into the global extension registry instead of attaching the
+        // extension to whichever profile happens to be active during restore.
+        profileLocation: this.#extensionFolder,
+      } satisfies InstallExtensionCommandOptions);
       logger.info(`extension ${ext} installed`);
     } catch (err) {
-      logger.error(`extension ${ext} failed to install`, err);
+      logger.warn(`extension ${ext} install with explicit profileLocation failed; retrying default install`, err);
+      try {
+        await vscode.commands.executeCommand('workbench.extensions.installExtension', ext);
+        logger.info(`extension ${ext} installed`);
+      } catch (fallbackErr) {
+        logger.error(`extension ${ext} failed to install`, fallbackErr);
+      }
     }
   }
 
