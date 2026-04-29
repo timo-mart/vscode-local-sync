@@ -32,12 +32,20 @@ type ProfileEntry = {
 
 const DefaultProfileLocation = '__default__profile__';
 const DefaultProfileName = 'Default';
-const DefaultProfileIcon = 'default-view-icon';
+const DefaultProfileIcon = 'account';
 const OpenProfileSelectorCommands = [
   'workbench.profiles.actions.switchProfile',
   'workbench.profiles.actions.manageProfiles',
   'workbench.action.openCommands',
 ] as const;
+const ProfileIconMap: Record<string, string> = {
+  snake: 'symbol-misc',
+  'terminal-linux': 'terminal',
+  coffee: 'symbol-class',
+  chip: 'extensions',
+  verified: 'verified',
+  server: 'server',
+};
 
 export class ProfileStatusService implements vscode.Disposable {
   #item: vscode.StatusBarItem;
@@ -241,7 +249,7 @@ export class ProfileStatusService implements vscode.Disposable {
       return DefaultProfileIcon;
     }
     if (typeof profile?.icon === 'string' && profile.icon.length > 0) {
-      return profile.icon;
+      return ProfileIconMap[profile.icon] ?? 'account';
     }
     return 'account';
   }

@@ -1,5 +1,7 @@
 import * as vscode from 'vscode';
 import { spawn } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import * as provider from './data-provider';
 import { readJsonContent, writeJsonContent } from './file.utils';
@@ -48,7 +50,7 @@ export class SyncService {
   };
 
   constructor(context: vscode.ExtensionContext) {
-    this.#extensionFolder = vscode.Uri.joinPath(context.extensionUri, '..', 'extensions.json');
+    this.#extensionFolder = this.getExtensionManifestPath();
     this.#userFolder = this.getUserfolder(context);
     this.#dataProviders = [
       new provider.ProfilesProvider(this.#userFolder),
@@ -216,6 +218,29 @@ export class SyncService {
     }
   }
 
+  private getExtensionManifestPath(): vscode.Uri {
+    const dataFolderName = this.getProductDataFolderName();
+    return vscode.Uri.file(path.join(os.homedir(), dataFolderName, 'extensions', 'extensions.json'));
+  }
+
+  private getProductDataFolderName(): string {
+    try {
+      const productJsonPath = path.join(vscode.env.appRoot, 'product.json');
+      const product = JSON.parse(fs.readFileSync(productJsonPath, 'utf8')) as { dataFolderName?: unknown };
+      if (typeof product.dataFolderName === 'string' && product.dataFolderName.length > 0) {
+        return product.dataFolderName;
+      }
+    } catch (err) {
+      logger.warn('failed to resolve product dataFolderName, using fallback', err);
+    }
+
+    if (vscode.env.appName.toLowerCase().includes('codium')) {
+      return '.vscode-oss';
+    }
+
+    return '.vscode';
+  }
+
   private async finalizeProfileRestore(): Promise<boolean> {
     const pendingRestorePath = vscode.Uri.joinPath(
       this.#userFolder,
@@ -300,7 +325,10 @@ export class SyncService {
     profileExtensionMap?: ProfileExtensionMap,
     profilesDirectoryName = 'profiles'
   ): Promise<void> {
-    const installedById = await this.readInstalledExtensionManifestEntries();
+    const installedById = await this.readInstalledExtensionManifestEntries([
+      { root: this.#userFolder, profilesDirectoryName: 'profiles' },
+      { root, profilesDirectoryName },
+    ]);
     if (installedById.size === 0) {
       return;
     }
@@ -346,7 +374,9 @@ export class SyncService {
     }
   }
 
-  private async readInstalledExtensionManifestEntries(): Promise<Map<string, ExtensionManifestEntry>> {
+  private async readInstalledExtensionManifestEntries(
+    profileRoots: Array<{ root: vscode.Uri; profilesDirectoryName: string }>
+  ): Promise<Map<string, ExtensionManifestEntry>> {
     const installedById = new Map<string, ExtensionManifestEntry>();
 
     const addEntries = (entries: Array<ExtensionManifestEntry> | undefined) => {
@@ -360,8 +390,12 @@ export class SyncService {
 
     addEntries(await readJsonContent<Array<ExtensionManifestEntry>>(this.#extensionFolder));
 
-    for (const entries of Object.values(await this.readProfileManifestEntries(this.#userFolder))) {
-      addEntries(entries);
+    for (const profileRoot of profileRoots) {
+      for (const entries of Object.values(
+        await this.readProfileManifestEntries(profileRoot.root, profileRoot.profilesDirectoryName)
+      )) {
+        addEntries(entries);
+      }
     }
 
     return installedById;
@@ -420,8 +454,11 @@ export class SyncService {
     return profileExtensionMap;
   }
 
-  private async readProfileManifestEntries(root: vscode.Uri): Promise<Record<string, Array<ExtensionManifestEntry>>> {
-    const profilesRoot = vscode.Uri.joinPath(root, 'profiles');
+  private async readProfileManifestEntries(
+    root: vscode.Uri,
+    profilesDirectoryName = 'profiles'
+  ): Promise<Record<string, Array<ExtensionManifestEntry>>> {
+    const profilesRoot = vscode.Uri.joinPath(root, profilesDirectoryName);
     const profileEntries: Record<string, Array<ExtensionManifestEntry>> = {};
 
     let profiles: Array<[string, vscode.FileType]>;

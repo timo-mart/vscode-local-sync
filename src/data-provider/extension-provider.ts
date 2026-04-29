@@ -3,7 +3,10 @@ import { logger } from '../initOutputChannel';
 import { DataOptions, DataProvider } from './data-provider';
 import { readJsonContent, writeJsonContent } from '../file.utils';
 import { getConfigSetting } from '../config';
-import { ProfileExtensionsBackupFileName } from './profiles-provider';
+import {
+  PendingProfilesRestoreDirectoryName,
+  ProfileExtensionsBackupFileName,
+} from './profiles-provider';
 
 interface Extension extends vscode.Extension<unknown> {
   packageJSON: {
@@ -20,6 +23,8 @@ type InstallExtensionCommandOptions = {
   isApplicationScoped?: boolean;
   profileLocation?: vscode.Uri;
 };
+
+type ProfileExtensionMap = Record<string, Array<string>>;
 
 export class ExtensionProvider implements DataProvider {
   readonly id = ExtensionProviderId;
@@ -65,29 +70,44 @@ export class ExtensionProvider implements DataProvider {
     return (extensions || []).filter(ext => !ignoredExtensios.includes(ext));
   }
 
-  public async restore({ path, dryRun }: DataOptions): Promise<void> {
+  public async restore({ path, userFolder, dryRun }: DataOptions): Promise<void> {
     const extensions = this.filterIgnoredExtensions(await readJsonContent<Array<string>>(this.getFilepath(path)));
     const installedExtensions = this.filterIgnoredExtensions(await this.getInstalledExtensions());
+    const profileExtensionMap = await this.getProfileExtensionMap(path);
+    const profileSpecificExtensions = new Set(Object.values(profileExtensionMap).flat());
 
     const missingExtensions = extensions.filter(ext => !installedExtensions.includes(ext));
+    const missingDefaultProfileExtensions = missingExtensions.filter(ext => !profileSpecificExtensions.has(ext));
+    const missingProfileExtensions = missingExtensions.filter(ext => profileSpecificExtensions.has(ext));
     const deletedExtensions = this.shouldRemoveExtensions
       ? installedExtensions.filter(ext => !extensions.includes(ext))
       : [];
-    logger.info('extensions restore', missingExtensions, ' deleted:', deletedExtensions);
+    logger.info(
+      'extensions restore',
+      {
+        missingDefaultProfileExtensions,
+        missingProfileExtensions,
+        deletedExtensions,
+      }
+    );
     if (!dryRun) {
-      await Promise.all(missingExtensions.map(ext => this.installExtension(ext)));
+      await Promise.all(missingDefaultProfileExtensions.map(ext => this.installExtension(ext, this.#extensionFolder)));
+      await Promise.all(
+        missingProfileExtensions.map(ext => this.installExtension(ext, this.getProfileInstallTarget(ext, profileExtensionMap, userFolder)))
+      );
       await Promise.all(deletedExtensions.map(ext => this.deleteExtension(ext)));
     }
   }
 
-  private async installExtension(ext: string) {
+  private async installExtension(ext: string, profileLocation?: vscode.Uri) {
     try {
-      await vscode.commands.executeCommand('workbench.extensions.installExtension', ext, {
+      const options: InstallExtensionCommandOptions = {
         isApplicationScoped: false,
-        // Install into the global extension registry instead of attaching the
-        // extension to whichever profile happens to be active during restore.
-        profileLocation: this.#extensionFolder,
-      } satisfies InstallExtensionCommandOptions);
+      };
+      if (profileLocation) {
+        options.profileLocation = profileLocation;
+      }
+      await vscode.commands.executeCommand('workbench.extensions.installExtension', ext, options);
       logger.info(`extension ${ext} installed`);
     } catch (err) {
       logger.warn(`extension ${ext} install with explicit profileLocation failed; retrying default install`, err);
@@ -110,11 +130,42 @@ export class ExtensionProvider implements DataProvider {
   }
 
   private async getProfileExtensionIds(userFolder: vscode.Uri, backupPath: vscode.Uri): Promise<Array<string>> {
-    const profileExtensionMap =
-      (await readJsonContent<Record<string, Array<string>>>(vscode.Uri.joinPath(backupPath, ProfileExtensionsBackupFileName))) ??
-      (await this.readProfileExtensionMapFromProfiles(userFolder));
+    const profileExtensionMap = await this.getProfileExtensionMap(backupPath, userFolder);
 
     return Array.from(new Set(Object.values(profileExtensionMap).flat()));
+  }
+
+  private async getProfileExtensionMap(backupPath: vscode.Uri, userFolder?: vscode.Uri): Promise<ProfileExtensionMap> {
+    const fromBackup = await readJsonContent<ProfileExtensionMap>(vscode.Uri.joinPath(backupPath, ProfileExtensionsBackupFileName));
+    if (fromBackup) {
+      return fromBackup;
+    }
+
+    if (userFolder) {
+      return this.readProfileExtensionMapFromProfiles(userFolder);
+    }
+
+    return {};
+  }
+
+  private getProfileInstallTarget(
+    extensionId: string,
+    profileExtensionMap: ProfileExtensionMap,
+    userFolder: vscode.Uri
+  ): vscode.Uri | undefined {
+    for (const [profileLocation, extensionIds] of Object.entries(profileExtensionMap)) {
+      if (extensionIds.includes(extensionId)) {
+        return vscode.Uri.joinPath(
+          userFolder,
+          'globalStorage',
+          PendingProfilesRestoreDirectoryName,
+          profileLocation,
+          'extensions.json'
+        );
+      }
+    }
+
+    return undefined;
   }
 
   private async readProfileExtensionMapFromProfiles(root: vscode.Uri): Promise<Record<string, Array<string>>> {
