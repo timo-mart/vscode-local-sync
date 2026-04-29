@@ -137,14 +137,30 @@ export class ProfilesProvider implements DataProvider {
           if (fileType === vscode.FileType.Directory && activeProfileLocations && !activeProfileLocations.has(name)) {
             continue;
           }
-          await vscode.workspace.fs.copy(vscode.Uri.joinPath(source, name), vscode.Uri.joinPath(target, name), {
-            overwrite: true,
-          });
+          await this.copyProfilesEntry(vscode.Uri.joinPath(source, name), vscode.Uri.joinPath(target, name), fileType);
         }
       }
     } catch (err) {
       logger.error(`profiles ${action} failed`, err);
     }
+  }
+
+  private async copyProfilesEntry(source: vscode.Uri, target: vscode.Uri, fileType: vscode.FileType): Promise<void> {
+    if (fileType === vscode.FileType.Directory) {
+      await vscode.workspace.fs.createDirectory(target);
+      for (const [name, childType] of await vscode.workspace.fs.readDirectory(source)) {
+        await this.copyProfilesEntry(vscode.Uri.joinPath(source, name), vscode.Uri.joinPath(target, name), childType);
+      }
+      return;
+    }
+
+    if (source.path.endsWith('/extensions.json')) {
+      return;
+    }
+
+    await vscode.workspace.fs.copy(source, target, {
+      overwrite: true,
+    });
   }
 
   private async pathExists(path: vscode.Uri): Promise<boolean> {

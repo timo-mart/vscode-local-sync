@@ -82,7 +82,6 @@ export class SyncService {
         }
         if (shouldSyncProfileExtensionManifest) {
           await this.backupProfileExtensionMap(path);
-          await this.syncProfileExtensionManifests(path);
         }
       });
     } catch (err) {
