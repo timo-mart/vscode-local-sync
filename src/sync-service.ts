@@ -121,8 +121,9 @@ export class SyncService {
         }
         if (shouldFinalizeProfileRestore) {
           await this.syncProfileExtensionManifests(
-            vscode.Uri.joinPath(this.#userFolder, 'globalStorage', provider.PendingProfilesRestoreDirectoryName),
-            await this.readProfileExtensionMap(path)
+            vscode.Uri.joinPath(this.#userFolder, 'globalStorage'),
+            await this.readProfileExtensionMap(path),
+            provider.PendingProfilesRestoreDirectoryName
           );
         }
       });
@@ -296,7 +297,8 @@ export class SyncService {
 
   private async syncProfileExtensionManifests(
     root: vscode.Uri,
-    profileExtensionMap?: ProfileExtensionMap
+    profileExtensionMap?: ProfileExtensionMap,
+    profilesDirectoryName = 'profiles'
   ): Promise<void> {
     const installedExtensions = await readJsonContent<Array<ExtensionManifestEntry>>(this.#extensionFolder);
     if (!installedExtensions?.length) {
@@ -308,7 +310,7 @@ export class SyncService {
         .map(extension => [extension.identifier?.id, extension] as const)
         .filter((entry): entry is readonly [string, ExtensionManifestEntry] => !!entry[0])
     );
-    const profilesRoot = vscode.Uri.joinPath(root, 'profiles');
+    const profilesRoot = vscode.Uri.joinPath(root, profilesDirectoryName);
 
     let profiles: Array<[string, vscode.FileType]>;
     try {
