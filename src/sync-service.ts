@@ -184,8 +184,10 @@ export class SyncService {
     const storagePath = vscode.Uri.joinPath(this.#userFolder, 'globalStorage', 'storage.json');
     const helperScript = [
       "const fs=require('node:fs');",
-      'const [metadataPath,storagePath,parentPid]=process.argv.slice(1);',
+      "const { spawn }=require('node:child_process');",
+      'const [metadataPath,storagePath,parentPid,appPath,appArgsJson]=process.argv.slice(1);',
       'const pid=Number(parentPid);',
+      'const appArgs=appArgsJson?JSON.parse(appArgsJson):[];',
       'const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));',
       'const alive=value=>{try{process.kill(value,0);return true;}catch{return false;}};',
       '(async()=>{',
@@ -198,26 +200,45 @@ export class SyncService {
       '}',
       "fs.writeFileSync(storagePath,JSON.stringify(storage,null,2));",
       "fs.unlinkSync(metadataPath);",
+      'if(appPath){const child=spawn(appPath,appArgs,{detached:true,stdio:"ignore"});child.unref();}',
       '})().catch(()=>process.exit(1));',
     ].join('');
 
     try {
-      const child = spawn(process.execPath, ['-e', helperScript, pendingRestorePath.fsPath, storagePath.fsPath, String(process.pid)], {
-        detached: true,
-        stdio: 'ignore',
-        env: {
-          ...process.env,
-          ELECTRON_RUN_AS_NODE: '1',
-        },
-      });
-      child.unref();
-      void vscode.window.showInformationMessage(
-        'Profiles were restored. Close all VSCodium windows and reopen to finish registering them in the Profiles UI.'
+      const relaunchArgs = process.argv.slice(1);
+      const child = spawn(
+        process.execPath,
+        [
+          '-e',
+          helperScript,
+          pendingRestorePath.fsPath,
+          storagePath.fsPath,
+          String(process.pid),
+          process.execPath,
+          JSON.stringify(relaunchArgs),
+        ],
+        {
+          detached: true,
+          stdio: 'ignore',
+          env: {
+            ...process.env,
+            ELECTRON_RUN_AS_NODE: '1',
+          },
+        }
       );
+      child.unref();
+      const restart = 'Restart VSCodium';
+      const result = await vscode.window.showInformationMessage(
+        'Profiles were restored. Restart VSCodium to finish registering them in the Profiles UI.',
+        restart
+      );
+      if (result === restart) {
+        await vscode.commands.executeCommand('workbench.action.quit');
+      }
     } catch (err) {
       logger.error('failed to schedule profile restore finalization', err);
       void vscode.window.showWarningMessage(
-        'Profiles were restored, but VSCodium could not schedule the final registration step automatically.'
+        'Profiles were restored, but VSCodium could not schedule the restart needed to finish registering them automatically.'
       );
     }
   }
