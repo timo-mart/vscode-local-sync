@@ -37,9 +37,19 @@ export function activate(context: vscode.ExtensionContext): void {
         });
       }),
       vscode.commands.registerCommand('local-sync.restore', async () => {
-        await runWithProgress('local-sync: Restoring settings and profiles...', async () => {
-          await syncService.restore();
-        });
+        const result = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: 'local-sync: Restoring settings and profiles...',
+            cancellable: false,
+          },
+          async () => {
+            return syncService.restore();
+          }
+        );
+        if (result.restartRequired) {
+          await syncService.promptForRestartAfterRestore();
+        }
       }),
       vscode.commands.registerCommand('local-sync.restore.dryrun', async () => {
         logger.show(true);

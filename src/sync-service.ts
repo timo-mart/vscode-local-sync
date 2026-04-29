@@ -99,10 +99,10 @@ export class SyncService {
     return this.#dataProviders;
   }
 
-  public async restore(options?: { providerId?: string; dryRun?: boolean }): Promise<void> {
+  public async restore(options?: { providerId?: string; dryRun?: boolean }): Promise<{ restartRequired: boolean }> {
     if (this.#isRestoring) {
       logger.debug('restore prevented because restore is running');
-      return;
+      return { restartRequired: false };
     }
     logger.debug('restore started');
     this.#isRestoring = true;
@@ -121,14 +121,16 @@ export class SyncService {
           logger.debug(`provider ${dataProvider.id} restore finished`);
         }
         if (shouldFinalizeProfileRestore) {
-          await this.syncProfileExtensionManifests(this.#userFolder, await this.readProfileExtensionMap(path));
+          await this.syncProfileExtensionManifests(
+            vscode.Uri.joinPath(this.#userFolder, 'globalStorage', provider.PendingProfilesRestoreDirectoryName),
+            await this.readProfileExtensionMap(path)
+          );
         }
       });
-      if (shouldFinalizeProfileRestore) {
-        await this.finalizeProfileRestore();
-      }
+      return { restartRequired: shouldFinalizeProfileRestore && (await this.finalizeProfileRestore()) };
     } catch (err) {
       logger.error('unhandled error in restore', err);
+      return { restartRequired: false };
     } finally {
       this.#isRestoring = false;
       logger.debug('restore finished');
@@ -203,37 +205,51 @@ export class SyncService {
     ];
   }
 
-  private async finalizeProfileRestore(): Promise<void> {
+  public async promptForRestartAfterRestore(): Promise<void> {
+    const restart = 'Restart VSCodium';
+    const result = await vscode.window.showInformationMessage(
+      'Profiles were restored. Restart VSCodium to finish registering them in the Profiles UI.',
+      restart
+    );
+    if (result === restart) {
+      await vscode.commands.executeCommand('workbench.action.quit');
+    }
+  }
+
+  private async finalizeProfileRestore(): Promise<boolean> {
     const pendingRestorePath = vscode.Uri.joinPath(
       this.#userFolder,
       'globalStorage',
       provider.PendingProfilesRestoreFileName
     );
+    const pendingProfilesPath = vscode.Uri.joinPath(
+      this.#userFolder,
+      'globalStorage',
+      provider.PendingProfilesRestoreDirectoryName
+    );
 
-    try {
-      await vscode.workspace.fs.stat(pendingRestorePath);
-    } catch {
-      return;
+    const hasPendingMetadata = await this.pathExists(pendingRestorePath);
+    const hasPendingProfiles = await this.pathExists(pendingProfilesPath);
+    if (!hasPendingMetadata && !hasPendingProfiles) {
+      return false;
     }
 
     const storagePath = vscode.Uri.joinPath(this.#userFolder, 'globalStorage', 'storage.json');
+    const profilesPath = vscode.Uri.joinPath(this.#userFolder, 'profiles');
     const helperScript = [
       "const fs=require('node:fs');",
       "const { spawn }=require('node:child_process');",
-      'const [metadataPath,storagePath,parentPid,appPath]=process.argv.slice(1);',
+      'const [metadataPath,stagedProfilesPath,targetProfilesPath,storagePath,parentPid,appPath]=process.argv.slice(1);',
       'const pid=Number(parentPid);',
       'const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));',
       'const alive=value=>{try{process.kill(value,0);return true;}catch{return false;}};',
       '(async()=>{',
       'while(Number.isFinite(pid)&&alive(pid)){await sleep(500);}',
-      "const metadata=JSON.parse(fs.readFileSync(metadataPath,'utf8'));",
-      'let storage={};',
-      "try{storage=JSON.parse(fs.readFileSync(storagePath,'utf8'));}catch{}",
+      'if(fs.existsSync(stagedProfilesPath)){if(fs.existsSync(targetProfilesPath)){fs.rmSync(targetProfilesPath,{recursive:true,force:true});}fs.mkdirSync(targetProfilesPath,{recursive:true});for(const entry of fs.readdirSync(stagedProfilesPath)){fs.cpSync(`${stagedProfilesPath}/${entry}`,`${targetProfilesPath}/${entry}`,{recursive:true,force:true});}fs.rmSync(stagedProfilesPath,{recursive:true,force:true});}',
+      'if(fs.existsSync(metadataPath)){const metadata=JSON.parse(fs.readFileSync(metadataPath,"utf8"));let storage={};try{storage=JSON.parse(fs.readFileSync(storagePath,"utf8"));}catch{}',
       `for(const key of ${JSON.stringify(SyncService.PROFILE_METADATA_KEYS)}){`,
-      'if(Object.prototype.hasOwnProperty.call(metadata,key)){storage[key]=metadata[key];}else{delete storage[key];}',
-      '}',
-      "fs.writeFileSync(storagePath,JSON.stringify(storage,null,2));",
-      "fs.unlinkSync(metadataPath);",
+      'if(Object.prototype.hasOwnProperty.call(metadata,key)){storage[key]=metadata[key];}else{delete storage[key];}}',
+      'fs.writeFileSync(storagePath,JSON.stringify(storage,null,2));fs.rmSync(metadataPath,{force:true});}',
       'if(appPath){const env={...process.env};for(const key of Object.keys(env)){if(key.startsWith("ELECTRON_")||key.startsWith("VSCODE_")){delete env[key];}}delete env.NODE_OPTIONS;const child=spawn(appPath,[],{detached:true,stdio:"ignore",env});child.unref();}',
       '})().catch(()=>process.exit(1));',
     ].join('');
@@ -246,6 +262,8 @@ export class SyncService {
           '-e',
           helperScript,
           pendingRestorePath.fsPath,
+          pendingProfilesPath.fsPath,
+          profilesPath.fsPath,
           storagePath.fsPath,
           String(process.pid),
           appPath,
@@ -260,19 +278,13 @@ export class SyncService {
         }
       );
       child.unref();
-      const restart = 'Restart VSCodium';
-      const result = await vscode.window.showInformationMessage(
-        'Profiles were restored. Restart VSCodium to finish registering them in the Profiles UI.',
-        restart
-      );
-      if (result === restart) {
-        await vscode.commands.executeCommand('workbench.action.quit');
-      }
+      return true;
     } catch (err) {
       logger.error('failed to schedule profile restore finalization', err);
       void vscode.window.showWarningMessage(
         'Profiles were restored, but VSCodium could not schedule the restart needed to finish registering them automatically.'
       );
+      return false;
     }
   }
 

@@ -21,6 +21,7 @@ type StorageJson = {
 export const ProfilesProviderId = 'profiles';
 export const PendingProfilesRestoreFileName = 'local-sync-profiles-restore.json';
 export const ProfileExtensionsBackupFileName = 'profile-extensions.json';
+export const PendingProfilesRestoreDirectoryName = 'local-sync-profiles-restore-profiles';
 
 export class ProfilesProvider implements DataProvider {
   readonly id = ProfilesProviderId;
@@ -48,7 +49,6 @@ export class ProfilesProvider implements DataProvider {
 
   public async restore({ path, dryRun }: DataOptions): Promise<void> {
     const source = this.getProfilesPath(path);
-    const target = this.getProfilesPath(this.#userFolder);
     const profileMetadata = await readJsonContent<StorageJson>(this.getMetadataPath(path));
 
     logger.info('profiles restore', source.fsPath);
@@ -59,7 +59,7 @@ export class ProfilesProvider implements DataProvider {
 
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.#userFolder, 'globalStorage'));
     await writeJsonContent(this.getPendingRestorePath(), profileMetadata ?? {});
-    await this.syncProfilesDirectory(source, target, 'restore', this.getProfileLocations(profileMetadata));
+    await this.syncProfilesDirectory(source, this.getPendingRestoreProfilesPath(), 'restore', this.getProfileLocations(profileMetadata));
   }
 
   private getMetadataPath(path: vscode.Uri) {
@@ -76,6 +76,10 @@ export class ProfilesProvider implements DataProvider {
 
   private getPendingRestorePath() {
     return vscode.Uri.joinPath(this.#userFolder, 'globalStorage', PendingProfilesRestoreFileName);
+  }
+
+  private getPendingRestoreProfilesPath() {
+    return vscode.Uri.joinPath(this.#userFolder, 'globalStorage', PendingProfilesRestoreDirectoryName);
   }
 
   private getProfileMetadata(storageJson: StorageJson | undefined): StorageJson {
