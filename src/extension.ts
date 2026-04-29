@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { initOutputChannel, logger } from './initOutputChannel';
 import { SyncService } from './sync-service';
 import { watchConfigSettings } from './config';
+import { ProfileStatusService } from './profile-status';
 
 async function runWithProgress(title: string, action: () => Promise<void>): Promise<void> {
   await vscode.window.withProgress(
@@ -18,11 +19,13 @@ async function runWithProgress(title: string, action: () => Promise<void>): Prom
 
 export function activate(context: vscode.ExtensionContext): void {
   const syncService = new SyncService(context);
+  const profileStatusService = new ProfileStatusService(context);
 
   let isRestored = false;
   context.subscriptions.push(
     ...[
       initOutputChannel(),
+      profileStatusService,
       vscode.commands.registerCommand('local-sync.backup', async () => {
         await runWithProgress('local-sync: Backing up settings and profiles...', async () => {
           await syncService.backup();
@@ -59,12 +62,16 @@ export function activate(context: vscode.ExtensionContext): void {
           });
         });
       }),
+      vscode.commands.registerCommand('local-sync.refreshProfileStatus', async () => {
+        await profileStatusService.refresh();
+      }),
 
       watchConfigSettings(config => {
         const backupPath = config.get<string>('backupPath');
         if (backupPath) {
           syncService.backupPath = vscode.Uri.file(backupPath);
         }
+        profileStatusService.setEnabled(config.get<boolean>('showProfileStatus', true));
         const result: Array<vscode.Disposable> = [];
         if (config.get('autobackup')) {
           result.push(...syncService.watchForChanges());
@@ -73,6 +80,7 @@ export function activate(context: vscode.ExtensionContext): void {
           void syncService.restore();
         }
         isRestored = true;
+        void profileStatusService.refresh();
         return result;
       }),
     ]

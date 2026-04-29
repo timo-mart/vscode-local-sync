@@ -71,6 +71,11 @@
                             "type": "string"
                         },
                         "description": "ignore extensions from sync"
+                    },
+                    "local-sync.showProfileStatus": {
+                        "type": "boolean",
+                        "default": true,
+                        "description": "show a local-sync status bar item with the resolved current profile name"
                     }
                 }
             }
@@ -99,6 +104,12 @@
                 "category": "local-sync",
                 "command": "local-sync.restore.dryrun",
                 "icon": "$(discard)"
+            },
+            {
+                "title": "refresh profile status",
+                "category": "local-sync",
+                "command": "local-sync.refreshProfileStatus",
+                "icon": "$(refresh)"
             }
         ]
     },
