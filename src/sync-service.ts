@@ -2,7 +2,19 @@ import * as vscode from 'vscode';
 import { spawn } from 'node:child_process';
 import * as path from 'node:path';
 import * as provider from './data-provider';
+import { readJsonContent, writeJsonContent } from './file.utils';
 import { logger } from './initOutputChannel';
+
+type ExtensionManifestEntry = {
+  identifier?: {
+    id?: string;
+    uuid?: string;
+  };
+  version?: string;
+  location?: unknown;
+  relativeLocation?: string;
+  metadata?: Record<string, unknown>;
+};
 
 export class SyncService {
   static readonly PROFILE_METADATA_KEYS = [
@@ -50,6 +62,8 @@ export class SyncService {
     }
     logger.debug('backup started');
     try {
+      const shouldSyncProfileExtensionManifest =
+        !options?.dryRun && this.getDataProviders(options?.providerId).some(d => d.id === provider.ProfilesProviderId);
       await this.runWithLock(async path => {
         for (const provider of this.getDataProviders(options?.providerId)) {
           logger.debug(`provider ${provider.id} backup started`);
@@ -59,6 +73,9 @@ export class SyncService {
             dryRun: !!options?.dryRun,
           });
           logger.debug(`provider ${provider.id} backup finished`);
+        }
+        if (shouldSyncProfileExtensionManifest) {
+          await this.reconcileProfileExtensionManifests(path);
         }
       });
     } catch (err) {
@@ -95,6 +112,9 @@ export class SyncService {
             dryRun: !!options?.dryRun,
           });
           logger.debug(`provider ${dataProvider.id} restore finished`);
+        }
+        if (shouldFinalizeProfileRestore) {
+          await this.reconcileProfileExtensionManifests(this.#userFolder);
         }
       });
       if (shouldFinalizeProfileRestore) {
@@ -254,6 +274,56 @@ export class SyncService {
       return path.join(vscode.env.appRoot, '..', '..', `${vscode.env.appName}.exe`);
     }
     return process.execPath;
+  }
+
+  private async reconcileProfileExtensionManifests(root: vscode.Uri): Promise<void> {
+    const installedExtensions = await readJsonContent<Array<ExtensionManifestEntry>>(this.#extensionFolder);
+    if (!installedExtensions?.length) {
+      return;
+    }
+
+    const installedById = new Map(
+      installedExtensions
+        .map(extension => [extension.identifier?.id, extension] as const)
+        .filter((entry): entry is readonly [string, ExtensionManifestEntry] => !!entry[0])
+    );
+    const profilesRoot = vscode.Uri.joinPath(root, 'profiles');
+
+    let profiles: Array<[string, vscode.FileType]>;
+    try {
+      profiles = await vscode.workspace.fs.readDirectory(profilesRoot);
+    } catch {
+      return;
+    }
+
+    for (const [profileName, fileType] of profiles) {
+      if (fileType !== vscode.FileType.Directory) {
+        continue;
+      }
+
+      const profileExtensionsPath = vscode.Uri.joinPath(profilesRoot, profileName, 'extensions.json');
+      const profileExtensions = await readJsonContent<Array<ExtensionManifestEntry>>(profileExtensionsPath);
+      if (!profileExtensions?.length) {
+        continue;
+      }
+
+      const reconciledExtensions = profileExtensions.map(extension => {
+        const id = extension.identifier?.id;
+        if (!id) {
+          return extension;
+        }
+
+        const installed = installedById.get(id);
+        if (!installed) {
+          logger.warn(`profile extension ${id} is not installed locally; keeping existing profile entry`);
+          return extension;
+        }
+
+        return installed;
+      });
+
+      await writeJsonContent(profileExtensionsPath, reconciledExtensions);
+    }
   }
 
   private async runWithLock(action: (path: vscode.Uri) => Promise<void>) {
