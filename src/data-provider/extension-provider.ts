@@ -3,6 +3,7 @@ import { logger } from '../initOutputChannel';
 import { DataOptions, DataProvider } from './data-provider';
 import { readJsonContent, writeJsonContent } from '../file.utils';
 import { getConfigSetting } from '../config';
+import { ProfileExtensionsBackupFileName } from './profiles-provider';
 
 interface Extension extends vscode.Extension<unknown> {
   packageJSON: {
@@ -23,8 +24,10 @@ export class ExtensionProvider implements DataProvider {
     this.#extensionFolder = extensionFolder;
   }
 
-  public async backup({ path, dryRun }: DataOptions): Promise<void> {
-    const installedExtensions = this.filterIgnoredExtensions(await this.getInstalledExtensions()).sort();
+  public async backup({ path, userFolder, dryRun }: DataOptions): Promise<void> {
+    const installedExtensions = this.filterIgnoredExtensions(
+      Array.from(new Set([...(await this.getInstalledExtensions()), ...(await this.getProfileExtensionIds(userFolder, path))]))
+    ).sort();
 
     logger.info('extensions backup', installedExtensions);
     if (!dryRun) {
@@ -57,9 +60,11 @@ export class ExtensionProvider implements DataProvider {
     return (extensions || []).filter(ext => !ignoredExtensios.includes(ext));
   }
 
-  public async restore({ path, dryRun }: DataOptions): Promise<void> {
+  public async restore({ path, userFolder, dryRun }: DataOptions): Promise<void> {
     const extensions = this.filterIgnoredExtensions(await readJsonContent<Array<string>>(this.getFilepath(path)));
-    const installedExtensions = this.filterIgnoredExtensions(await this.getInstalledExtensions());
+    const installedExtensions = this.filterIgnoredExtensions(
+      Array.from(new Set([...(await this.getInstalledExtensions()), ...(await this.getProfileExtensionIds(userFolder, path))]))
+    );
 
     const missingExtensions = extensions.filter(ext => !installedExtensions.includes(ext));
     const deletedExtensions = this.shouldRemoveExtensions
@@ -88,6 +93,45 @@ export class ExtensionProvider implements DataProvider {
     } catch (err) {
       logger.error(`extension ${ext} failed to delete`, err);
     }
+  }
+
+  private async getProfileExtensionIds(userFolder: vscode.Uri, backupPath: vscode.Uri): Promise<Array<string>> {
+    const profileExtensionMap =
+      (await readJsonContent<Record<string, Array<string>>>(vscode.Uri.joinPath(backupPath, ProfileExtensionsBackupFileName))) ??
+      (await this.readProfileExtensionMapFromProfiles(userFolder));
+
+    return Array.from(new Set(Object.values(profileExtensionMap).flat()));
+  }
+
+  private async readProfileExtensionMapFromProfiles(root: vscode.Uri): Promise<Record<string, Array<string>>> {
+    const profilesRoot = vscode.Uri.joinPath(root, 'profiles');
+    const profileExtensionMap: Record<string, Array<string>> = {};
+
+    let profiles: Array<[string, vscode.FileType]>;
+    try {
+      profiles = await vscode.workspace.fs.readDirectory(profilesRoot);
+    } catch {
+      return profileExtensionMap;
+    }
+
+    for (const [profileName, fileType] of profiles) {
+      if (fileType !== vscode.FileType.Directory) {
+        continue;
+      }
+
+      const extensions = await readJsonContent<Array<VSCodeExtensionsJSON>>(
+        vscode.Uri.joinPath(profilesRoot, profileName, 'extensions.json')
+      );
+      if (!extensions?.length) {
+        continue;
+      }
+
+      profileExtensionMap[profileName] = extensions
+        .map(extension => extension.identifier.id)
+        .filter((id): id is string => !!id);
+    }
+
+    return profileExtensionMap;
   }
 }
 

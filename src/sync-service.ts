@@ -16,6 +16,8 @@ type ExtensionManifestEntry = {
   metadata?: Record<string, unknown>;
 };
 
+type ProfileExtensionMap = Record<string, Array<string>>;
+
 export class SyncService {
   static readonly PROFILE_METADATA_KEYS = [
     'profileAssociations',
@@ -75,7 +77,8 @@ export class SyncService {
           logger.debug(`provider ${provider.id} backup finished`);
         }
         if (shouldSyncProfileExtensionManifest) {
-          await this.reconcileProfileExtensionManifests(path);
+          await this.backupProfileExtensionMap(path);
+          await this.syncProfileExtensionManifests(path);
         }
       });
     } catch (err) {
@@ -114,7 +117,7 @@ export class SyncService {
           logger.debug(`provider ${dataProvider.id} restore finished`);
         }
         if (shouldFinalizeProfileRestore) {
-          await this.reconcileProfileExtensionManifests(this.#userFolder);
+          await this.syncProfileExtensionManifests(this.#userFolder, await this.readProfileExtensionMap(path));
         }
       });
       if (shouldFinalizeProfileRestore) {
@@ -276,7 +279,10 @@ export class SyncService {
     return process.execPath;
   }
 
-  private async reconcileProfileExtensionManifests(root: vscode.Uri): Promise<void> {
+  private async syncProfileExtensionManifests(
+    root: vscode.Uri,
+    profileExtensionMap?: ProfileExtensionMap
+  ): Promise<void> {
     const installedExtensions = await readJsonContent<Array<ExtensionManifestEntry>>(this.#extensionFolder);
     if (!installedExtensions?.length) {
       return;
@@ -302,7 +308,10 @@ export class SyncService {
       }
 
       const profileExtensionsPath = vscode.Uri.joinPath(profilesRoot, profileName, 'extensions.json');
-      const profileExtensions = await readJsonContent<Array<ExtensionManifestEntry>>(profileExtensionsPath);
+      const profileExtensions =
+        (await readJsonContent<Array<ExtensionManifestEntry>>(profileExtensionsPath)) ??
+        this.createProfileExtensionsFromMap(profileName, profileExtensionMap, installedById);
+
       if (!profileExtensions?.length) {
         continue;
       }
@@ -324,6 +333,73 @@ export class SyncService {
 
       await writeJsonContent(profileExtensionsPath, reconciledExtensions);
     }
+  }
+
+  private createProfileExtensionsFromMap(
+    profileName: string,
+    profileExtensionMap: ProfileExtensionMap | undefined,
+    installedById: Map<string, ExtensionManifestEntry>
+  ): Array<ExtensionManifestEntry> | undefined {
+    const ids = profileExtensionMap?.[profileName];
+    if (!ids?.length) {
+      return undefined;
+    }
+
+    return ids
+      .map(id => {
+        const installed = installedById.get(id);
+        if (!installed) {
+          logger.warn(`profile extension ${id} is not installed locally; cannot recreate profile manifest entry`);
+        }
+        return installed;
+      })
+      .filter((extension): extension is ExtensionManifestEntry => !!extension);
+  }
+
+  private async backupProfileExtensionMap(path: vscode.Uri): Promise<void> {
+    const profileExtensionMap = await this.readProfileExtensionMapFromProfiles(this.#userFolder);
+    await writeJsonContent(vscode.Uri.joinPath(path, provider.ProfileExtensionsBackupFileName), profileExtensionMap);
+  }
+
+  private async readProfileExtensionMap(path: vscode.Uri): Promise<ProfileExtensionMap> {
+    const backupFile = vscode.Uri.joinPath(path, provider.ProfileExtensionsBackupFileName);
+    const fromBackup = await readJsonContent<ProfileExtensionMap>(backupFile);
+    if (fromBackup) {
+      return fromBackup;
+    }
+
+    return this.readProfileExtensionMapFromProfiles(path);
+  }
+
+  private async readProfileExtensionMapFromProfiles(root: vscode.Uri): Promise<ProfileExtensionMap> {
+    const profilesRoot = vscode.Uri.joinPath(root, 'profiles');
+    const profileExtensionMap: ProfileExtensionMap = {};
+
+    let profiles: Array<[string, vscode.FileType]>;
+    try {
+      profiles = await vscode.workspace.fs.readDirectory(profilesRoot);
+    } catch {
+      return profileExtensionMap;
+    }
+
+    for (const [profileName, fileType] of profiles) {
+      if (fileType !== vscode.FileType.Directory) {
+        continue;
+      }
+
+      const extensions = await readJsonContent<Array<ExtensionManifestEntry>>(
+        vscode.Uri.joinPath(profilesRoot, profileName, 'extensions.json')
+      );
+      if (!extensions?.length) {
+        continue;
+      }
+
+      profileExtensionMap[profileName] = extensions
+        .map(extension => extension.identifier?.id)
+        .filter((id): id is string => !!id);
+    }
+
+    return profileExtensionMap;
   }
 
   private async runWithLock(action: (path: vscode.Uri) => Promise<void>) {

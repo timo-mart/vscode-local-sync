@@ -20,6 +20,7 @@ type StorageJson = {
 
 export const ProfilesProviderId = 'profiles';
 export const PendingProfilesRestoreFileName = 'local-sync-profiles-restore.json';
+export const ProfileExtensionsBackupFileName = 'profile-extensions.json';
 
 export class ProfilesProvider implements DataProvider {
   readonly id = ProfilesProviderId;
