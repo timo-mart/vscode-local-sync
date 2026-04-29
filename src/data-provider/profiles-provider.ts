@@ -9,8 +9,10 @@ type StorageJson = {
   [key: string]: unknown;
 };
 
+export const ProfilesProviderId = 'profiles';
+
 export class ProfilesProvider implements DataProvider {
-  readonly id = 'profiles';
+  readonly id = ProfilesProviderId;
   #userFolder: vscode.Uri;
 
   constructor(userFolder: vscode.Uri) {

@@ -75,21 +75,22 @@ export class SyncService {
     this.#isRestoring = true;
 
     try {
+      const shouldOfferProfileReload =
+        !options?.dryRun && this.getDataProviders(options?.providerId).some(d => d.id === provider.ProfilesProviderId);
       await this.runWithLock(async path => {
-        if (!this.backupPath) {
-          logger.warn('missing backup path setting');
-          return;
-        }
-        for (const provider of this.getDataProviders(options?.providerId)) {
-          logger.debug(`provider ${provider.id} restore started`);
-          await provider.restore({
+        for (const dataProvider of this.getDataProviders(options?.providerId)) {
+          logger.debug(`provider ${dataProvider.id} restore started`);
+          await dataProvider.restore({
             path,
             userFolder: this.#userFolder,
             dryRun: !!options?.dryRun,
           });
-          logger.debug(`provider ${provider.id} restore finished`);
+          logger.debug(`provider ${dataProvider.id} restore finished`);
         }
       });
+      if (shouldOfferProfileReload) {
+        void this.offerReloadForProfiles();
+      }
     } catch (err) {
       logger.error('unhandled error in restore', err);
     } finally {
@@ -164,6 +165,18 @@ export class SyncService {
       fileSystemWatcher,
       profilesWatcher,
     ];
+  }
+
+  private async offerReloadForProfiles(): Promise<void> {
+    const reload = 'Reload Window';
+    const result = await vscode.window.showInformationMessage(
+      'Profiles were restored. Reload VSCodium to refresh the Profiles UI.',
+      reload
+    );
+
+    if (result === reload) {
+      await vscode.commands.executeCommand('workbench.action.reloadWindow');
+    }
   }
 
   private async runWithLock(action: (path: vscode.Uri) => Promise<void>) {
