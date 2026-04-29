@@ -17,6 +17,10 @@ type ExtensionManifestEntry = {
 };
 
 type ProfileExtensionMap = Record<string, Array<string>>;
+type LockFile = {
+  pid: number;
+  createdAt: number;
+};
 
 export class SyncService {
   static readonly PROFILE_METADATA_KEYS = [
@@ -408,30 +412,63 @@ export class SyncService {
       return;
     }
     const lockUri = vscode.Uri.joinPath(this.backupPath, 'sync.lock');
-    try {
-      await vscode.workspace.fs.stat(lockUri);
-      logger.warn('lock file exists');
-      return;
-    } catch {
+    const existingLock = await readJsonContent<LockFile>(lockUri);
+    if (await this.pathExists(lockUri)) {
+      if (existingLock?.pid && this.isProcessAlive(existingLock.pid)) {
+        logger.warn('lock file exists and owner process is alive');
+        return;
+      }
       try {
-        await vscode.workspace.fs.writeFile(lockUri, new Uint8Array());
+        logger.warn('removing stale lock file', lockUri.fsPath);
+        await vscode.workspace.fs.delete(lockUri);
       } catch (err) {
-        logger.warn('lock file was not created', err);
+        logger.warn('stale lock file could not be removed', err);
         return;
       }
     }
-    await action(this.backupPath);
+
     try {
-      // wait for 200ms before releasing lock
-      await new Promise<void>(resolve =>
-        setTimeout(() => {
-          resolve();
-        }, 200)
-      );
-      await vscode.workspace.fs.delete(lockUri);
-      return;
+      await writeJsonContent(lockUri, {
+        pid: process.pid,
+        createdAt: Date.now(),
+      });
     } catch (err) {
-      logger.error('lock file not deleted', err);
+      logger.warn('lock file was not created', err);
+      return;
+    }
+
+    try {
+      await action(this.backupPath);
+    } finally {
+      try {
+        // wait for 200ms before releasing lock
+        await new Promise<void>(resolve =>
+          setTimeout(() => {
+            resolve();
+          }, 200)
+        );
+        await vscode.workspace.fs.delete(lockUri);
+      } catch (err) {
+        logger.error('lock file not deleted', err);
+      }
+    }
+  }
+
+  private async pathExists(pathToCheck: vscode.Uri): Promise<boolean> {
+    try {
+      await vscode.workspace.fs.stat(pathToCheck);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
     }
   }
 }
