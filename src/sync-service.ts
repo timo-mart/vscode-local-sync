@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { spawn } from 'node:child_process';
+import * as path from 'node:path';
 import * as provider from './data-provider';
 import { logger } from './initOutputChannel';
 
@@ -199,11 +200,12 @@ export class SyncService {
       '}',
       "fs.writeFileSync(storagePath,JSON.stringify(storage,null,2));",
       "fs.unlinkSync(metadataPath);",
-      'if(appPath){const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const child=spawn(appPath,[],{detached:true,stdio:"ignore",env});child.unref();}',
+      'if(appPath){const env={...process.env};for(const key of Object.keys(env)){if(key.startsWith("ELECTRON_")||key.startsWith("VSCODE_")){delete env[key];}}delete env.NODE_OPTIONS;const child=spawn(appPath,[],{detached:true,stdio:"ignore",env});child.unref();}',
       '})().catch(()=>process.exit(1));',
     ].join('');
 
     try {
+      const appPath = this.getRelaunchPath();
       const child = spawn(
         process.execPath,
         [
@@ -212,7 +214,7 @@ export class SyncService {
           pendingRestorePath.fsPath,
           storagePath.fsPath,
           String(process.pid),
-          process.execPath,
+          appPath,
         ],
         {
           detached: true,
@@ -238,6 +240,13 @@ export class SyncService {
         'Profiles were restored, but VSCodium could not schedule the restart needed to finish registering them automatically.'
       );
     }
+  }
+
+  private getRelaunchPath(): string {
+    if (process.platform === 'win32') {
+      return path.join(vscode.env.appRoot, '..', '..', `${vscode.env.appName}.exe`);
+    }
+    return process.execPath;
   }
 
   private async runWithLock(action: (path: vscode.Uri) => Promise<void>) {
