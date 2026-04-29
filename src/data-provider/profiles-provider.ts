@@ -42,7 +42,7 @@ export class ProfilesProvider implements DataProvider {
     }
 
     await writeJsonContent(this.getMetadataPath(path), profileMetadata);
-    await this.syncProfilesDirectory(source, target, 'backup');
+    await this.syncProfilesDirectory(source, target, 'backup', this.getProfileLocations(profileMetadata));
   }
 
   public async restore({ path, dryRun }: DataOptions): Promise<void> {
@@ -58,7 +58,7 @@ export class ProfilesProvider implements DataProvider {
 
     await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.#userFolder, 'globalStorage'));
     await writeJsonContent(this.getPendingRestorePath(), profileMetadata ?? {});
-    await this.syncProfilesDirectory(source, target, 'restore');
+    await this.syncProfilesDirectory(source, target, 'restore', this.getProfileLocations(profileMetadata));
   }
 
   private getMetadataPath(path: vscode.Uri) {
@@ -93,7 +93,31 @@ export class ProfilesProvider implements DataProvider {
     return metadata;
   }
 
-  private async syncProfilesDirectory(source: vscode.Uri, target: vscode.Uri, action: 'backup' | 'restore'): Promise<void> {
+  private getProfileLocations(storageJson: StorageJson | undefined): Set<string> | undefined {
+    const profiles = storageJson?.userDataProfiles;
+    if (!Array.isArray(profiles)) {
+      return undefined;
+    }
+
+    return new Set(
+      profiles
+        .map(profile => {
+          if (!profile || typeof profile !== 'object') {
+            return undefined;
+          }
+          const location = (profile as { location?: unknown }).location;
+          return typeof location === 'string' ? location : undefined;
+        })
+        .filter((location): location is string => !!location)
+    );
+  }
+
+  private async syncProfilesDirectory(
+    source: vscode.Uri,
+    target: vscode.Uri,
+    action: 'backup' | 'restore',
+    activeProfileLocations?: Set<string>
+  ): Promise<void> {
     try {
       if (await this.pathExists(target)) {
         await vscode.workspace.fs.delete(target, {
@@ -103,9 +127,15 @@ export class ProfilesProvider implements DataProvider {
       }
 
       if (await this.pathExists(source)) {
-        await vscode.workspace.fs.copy(source, target, {
-          overwrite: true,
-        });
+        await vscode.workspace.fs.createDirectory(target);
+        for (const [name, fileType] of await vscode.workspace.fs.readDirectory(source)) {
+          if (fileType === vscode.FileType.Directory && activeProfileLocations && !activeProfileLocations.has(name)) {
+            continue;
+          }
+          await vscode.workspace.fs.copy(vscode.Uri.joinPath(source, name), vscode.Uri.joinPath(target, name), {
+            overwrite: true,
+          });
+        }
       }
     } catch (err) {
       logger.error(`profiles ${action} failed`, err);
