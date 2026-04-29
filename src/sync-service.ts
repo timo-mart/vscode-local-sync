@@ -200,7 +200,7 @@ export class SyncService {
       '}',
       "fs.writeFileSync(storagePath,JSON.stringify(storage,null,2));",
       "fs.unlinkSync(metadataPath);",
-      'if(appPath){const child=spawn(appPath,appArgs,{detached:true,stdio:"ignore"});child.unref();}',
+      'if(appPath){const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const child=spawn(appPath,appArgs,{detached:true,stdio:"ignore",env});child.unref();}',
       '})().catch(()=>process.exit(1));',
     ].join('');
 
