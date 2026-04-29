@@ -62,6 +62,9 @@ export function activate(context: vscode.ExtensionContext): void {
           });
         });
       }),
+      vscode.commands.registerCommand('local-sync.openProfileSelector', async () => {
+        await profileStatusService.openProfileSelector();
+      }),
       vscode.commands.registerCommand('local-sync.refreshProfileStatus', async () => {
         await profileStatusService.refresh();
       }),

@@ -13,13 +13,31 @@ type StorageJson = {
     location?: unknown;
     name?: unknown;
     shortName?: unknown;
+    icon?: unknown;
   }>;
 };
 
 type ResolvedProfileStatus = {
   name: string;
+  icon: string;
   detail: string;
 };
+
+type ProfileEntry = {
+  location?: unknown;
+  name?: unknown;
+  shortName?: unknown;
+  icon?: unknown;
+};
+
+const DefaultProfileLocation = '__default__profile__';
+const DefaultProfileName = 'Default';
+const DefaultProfileIcon = 'default-view-icon';
+const OpenProfileSelectorCommands = [
+  'workbench.profiles.actions.switchProfile',
+  'workbench.profiles.actions.manageProfiles',
+  'workbench.action.openCommands',
+] as const;
 
 export class ProfileStatusService implements vscode.Disposable {
   #item: vscode.StatusBarItem;
@@ -31,7 +49,7 @@ export class ProfileStatusService implements vscode.Disposable {
   constructor(context: vscode.ExtensionContext) {
     this.#item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 90);
     this.#item.name = 'local-sync profile status';
-    this.#item.command = 'local-sync.refreshProfileStatus';
+    this.#item.command = 'local-sync.openProfileSelector';
     this.#userFolder = this.getUserFolder(context);
 
     const storageWatcher = vscode.workspace.createFileSystemWatcher(
@@ -82,14 +100,14 @@ export class ProfileStatusService implements vscode.Disposable {
     }
 
     const profileStatus = await this.resolveProfileStatus();
-    this.#item.text = `$(account) ${profileStatus.name}`;
+    this.#item.text = `$(${profileStatus.icon}) Profile: ${profileStatus.name}`;
     this.#item.tooltip = new vscode.MarkdownString(
       [
         `**local-sync profile**`,
         '',
         profileStatus.detail,
         '',
-        'Click to refresh this indicator.',
+        'Click to open the native profile selector.',
       ].join('\n')
     );
     this.#item.show();
@@ -127,10 +145,12 @@ export class ProfileStatusService implements vscode.Disposable {
 
       const location = this.getAssociationLocation(workspaceAssociations[matchedKey]);
       const profile = profiles.find(entry => typeof entry.location === 'string' && entry.location === location);
-      const name = this.getProfileName(profile) ?? this.getFallbackProfileName(location);
+      const name = this.getProfileName(profile, location);
+      const icon = this.getProfileIcon(profile, location);
 
       return {
         name,
+        icon,
         detail: `Matched ${candidate.label} to \`${matchedKey}\`.`,
       };
     }
@@ -186,26 +206,57 @@ export class ProfileStatusService implements vscode.Disposable {
     return typeof location === 'string' ? location : undefined;
   }
 
-  private getProfileName(profile: { name?: unknown; shortName?: unknown } | undefined): string | undefined {
-    if (typeof profile?.name === 'string' && profile.name.length > 0) {
+  public async openProfileSelector(): Promise<void> {
+    for (const command of OpenProfileSelectorCommands) {
+      try {
+        if (command === 'workbench.action.openCommands') {
+          await vscode.commands.executeCommand(command, '>Profiles: Switch Profile');
+        } else {
+          await vscode.commands.executeCommand(command);
+        }
+        return;
+      } catch {
+        // Try the next known profile command id.
+      }
+    }
+
+    void vscode.window.showWarningMessage('Could not open the native profile selector on this VSCodium build.');
+  }
+
+  private getProfileName(profile: ProfileEntry | undefined, location: string | undefined): string {
+    if (location === DefaultProfileLocation) {
+      return DefaultProfileName;
+    }
+    if (typeof profile?.name === 'string' && profile.name.length > 0 && profile.name !== DefaultProfileLocation) {
       return profile.name;
     }
-    if (typeof profile?.shortName === 'string' && profile.shortName.length > 0) {
+    if (typeof profile?.shortName === 'string' && profile.shortName.length > 0 && profile.shortName !== DefaultProfileLocation) {
       return profile.shortName;
     }
-    return undefined;
+    return this.getFallbackProfileName(location);
+  }
+
+  private getProfileIcon(profile: ProfileEntry | undefined, location: string | undefined): string {
+    if (location === DefaultProfileLocation) {
+      return DefaultProfileIcon;
+    }
+    if (typeof profile?.icon === 'string' && profile.icon.length > 0) {
+      return profile.icon;
+    }
+    return 'account';
   }
 
   private getFallbackProfileName(location: string | undefined): string {
-    if (!location) {
-      return 'Default';
+    if (!location || location === DefaultProfileLocation) {
+      return DefaultProfileName;
     }
-    return path.posix.basename(location) || 'Default';
+    return path.posix.basename(location) || DefaultProfileName;
   }
 
   private getDefaultStatus(): ResolvedProfileStatus {
     return {
-      name: 'Default',
+      name: DefaultProfileName,
+      icon: DefaultProfileIcon,
       detail: 'No matching workspace profile association was found. The built-in Profiles picker remains the source of truth.',
     };
   }

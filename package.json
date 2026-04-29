@@ -110,6 +110,12 @@
                 "category": "local-sync",
                 "command": "local-sync.refreshProfileStatus",
                 "icon": "$(refresh)"
+            },
+            {
+                "title": "open profile selector",
+                "category": "local-sync",
+                "command": "local-sync.openProfileSelector",
+                "icon": "$(account)"
             }
         ]
     },
