@@ -3,6 +3,19 @@ import { initOutputChannel, logger } from './initOutputChannel';
 import { SyncService } from './sync-service';
 import { watchConfigSettings } from './config';
 
+async function runWithProgress(title: string, action: () => Promise<void>): Promise<void> {
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title,
+      cancellable: false,
+    },
+    async () => {
+      await action();
+    }
+  );
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const syncService = new SyncService(context);
 
@@ -11,21 +24,29 @@ export function activate(context: vscode.ExtensionContext): void {
     ...[
       initOutputChannel(),
       vscode.commands.registerCommand('local-sync.backup', async () => {
-        await syncService.backup();
+        await runWithProgress('local-sync: Backing up settings and profiles...', async () => {
+          await syncService.backup();
+        });
       }),
       vscode.commands.registerCommand('local-sync.backup.dryrun', async () => {
         logger.show(true);
-        await syncService.backup({
-          dryRun: true,
+        await runWithProgress('local-sync: Simulating backup...', async () => {
+          await syncService.backup({
+            dryRun: true,
+          });
         });
       }),
       vscode.commands.registerCommand('local-sync.restore', async () => {
-        await syncService.restore();
+        await runWithProgress('local-sync: Restoring settings and profiles...', async () => {
+          await syncService.restore();
+        });
       }),
       vscode.commands.registerCommand('local-sync.restore.dryrun', async () => {
         logger.show(true);
-        await syncService.restore({
-          dryRun: true,
+        await runWithProgress('local-sync: Simulating restore...', async () => {
+          await syncService.restore({
+            dryRun: true,
+          });
         });
       }),
 
