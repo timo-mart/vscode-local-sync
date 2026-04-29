@@ -185,9 +185,8 @@ export class SyncService {
     const helperScript = [
       "const fs=require('node:fs');",
       "const { spawn }=require('node:child_process');",
-      'const [metadataPath,storagePath,parentPid,appPath,appArgsJson]=process.argv.slice(1);',
+      'const [metadataPath,storagePath,parentPid,appPath]=process.argv.slice(1);',
       'const pid=Number(parentPid);',
-      'const appArgs=appArgsJson?JSON.parse(appArgsJson):[];',
       'const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));',
       'const alive=value=>{try{process.kill(value,0);return true;}catch{return false;}};',
       '(async()=>{',
@@ -200,12 +199,11 @@ export class SyncService {
       '}',
       "fs.writeFileSync(storagePath,JSON.stringify(storage,null,2));",
       "fs.unlinkSync(metadataPath);",
-      'if(appPath){const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const child=spawn(appPath,appArgs,{detached:true,stdio:"ignore",env});child.unref();}',
+      'if(appPath){const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;const child=spawn(appPath,[],{detached:true,stdio:"ignore",env});child.unref();}',
       '})().catch(()=>process.exit(1));',
     ].join('');
 
     try {
-      const relaunchArgs = process.argv.slice(1);
       const child = spawn(
         process.execPath,
         [
@@ -215,7 +213,6 @@ export class SyncService {
           storagePath.fsPath,
           String(process.pid),
           process.execPath,
-          JSON.stringify(relaunchArgs),
         ],
         {
           detached: true,
