@@ -3,6 +3,13 @@ import { DataOptions, DataProvider } from './data-provider';
 import { logger } from '../initOutputChannel';
 import { readJsonContent, writeJsonContent } from '../file.utils';
 
+const ProfileMetadataKeys = [
+  'profileAssociations',
+  'profileAssociationsMigration',
+  'userDataProfiles',
+  'userDataProfilesMigration',
+] as const;
+
 type StorageJson = {
   profileAssociations?: unknown;
   profileAssociationsMigration?: unknown;
@@ -34,19 +41,8 @@ export class ProfilesProvider implements DataProvider {
       return;
     }
 
-    if (profileMetadata) {
-      await writeJsonContent(this.getMetadataPath(path), profileMetadata);
-    }
-
-    if (await this.pathExists(source)) {
-      try {
-        await vscode.workspace.fs.copy(source, target, {
-          overwrite: true,
-        });
-      } catch (err) {
-        logger.error('profiles backup failed', err);
-      }
-    }
+    await writeJsonContent(this.getMetadataPath(path), profileMetadata);
+    await this.syncProfilesDirectory(source, target, 'backup');
   }
 
   public async restore({ path, dryRun }: DataOptions): Promise<void> {
@@ -60,20 +56,9 @@ export class ProfilesProvider implements DataProvider {
       return;
     }
 
-    if (profileMetadata) {
-      await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.#userFolder, 'globalStorage'));
-      await writeJsonContent(this.getPendingRestorePath(), profileMetadata);
-    }
-
-    if (await this.pathExists(source)) {
-      try {
-        await vscode.workspace.fs.copy(source, target, {
-          overwrite: true,
-        });
-      } catch (err) {
-        logger.error('profiles restore failed', err);
-      }
-    }
+    await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.#userFolder, 'globalStorage'));
+    await writeJsonContent(this.getPendingRestorePath(), profileMetadata ?? {});
+    await this.syncProfilesDirectory(source, target, 'restore');
   }
 
   private getMetadataPath(path: vscode.Uri) {
@@ -92,26 +77,39 @@ export class ProfilesProvider implements DataProvider {
     return vscode.Uri.joinPath(this.#userFolder, 'globalStorage', PendingProfilesRestoreFileName);
   }
 
-  private getProfileMetadata(storageJson: StorageJson | undefined): StorageJson | undefined {
-    if (!storageJson) {
-      return undefined;
-    }
-
+  private getProfileMetadata(storageJson: StorageJson | undefined): StorageJson {
     const metadata: StorageJson = {};
-    if (storageJson.profileAssociations !== undefined) {
-      metadata.profileAssociations = storageJson.profileAssociations;
-    }
-    if (storageJson.profileAssociationsMigration !== undefined) {
-      metadata.profileAssociationsMigration = storageJson.profileAssociationsMigration;
-    }
-    if (storageJson.userDataProfiles !== undefined) {
-      metadata.userDataProfiles = storageJson.userDataProfiles;
-    }
-    if (storageJson.userDataProfilesMigration !== undefined) {
-      metadata.userDataProfilesMigration = storageJson.userDataProfilesMigration;
+
+    if (!storageJson) {
+      return metadata;
     }
 
-    return Object.keys(metadata).length > 0 ? metadata : undefined;
+    for (const key of ProfileMetadataKeys) {
+      if (storageJson[key] !== undefined) {
+        metadata[key] = storageJson[key];
+      }
+    }
+
+    return metadata;
+  }
+
+  private async syncProfilesDirectory(source: vscode.Uri, target: vscode.Uri, action: 'backup' | 'restore'): Promise<void> {
+    try {
+      if (await this.pathExists(target)) {
+        await vscode.workspace.fs.delete(target, {
+          recursive: true,
+          useTrash: false,
+        });
+      }
+
+      if (await this.pathExists(source)) {
+        await vscode.workspace.fs.copy(source, target, {
+          overwrite: true,
+        });
+      }
+    } catch (err) {
+      logger.error(`profiles ${action} failed`, err);
+    }
   }
 
   private async pathExists(path: vscode.Uri): Promise<boolean> {

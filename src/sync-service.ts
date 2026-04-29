@@ -5,6 +5,13 @@ import * as provider from './data-provider';
 import { logger } from './initOutputChannel';
 
 export class SyncService {
+  static readonly PROFILE_METADATA_KEYS = [
+    'profileAssociations',
+    'profileAssociationsMigration',
+    'userDataProfiles',
+    'userDataProfilesMigration',
+  ] as const;
+
   #extensionFolder: vscode.Uri;
   #userFolder: vscode.Uri;
   #dataProviders: Array<provider.DataProvider>;
@@ -195,8 +202,8 @@ export class SyncService {
       "const metadata=JSON.parse(fs.readFileSync(metadataPath,'utf8'));",
       'let storage={};',
       "try{storage=JSON.parse(fs.readFileSync(storagePath,'utf8'));}catch{}",
-      "for(const key of ['profileAssociations','profileAssociationsMigration','userDataProfiles','userDataProfilesMigration']){",
-      'if(Object.prototype.hasOwnProperty.call(metadata,key)){storage[key]=metadata[key];}',
+      `for(const key of ${JSON.stringify(SyncService.PROFILE_METADATA_KEYS)}){`,
+      'if(Object.prototype.hasOwnProperty.call(metadata,key)){storage[key]=metadata[key];}else{delete storage[key];}',
       '}',
       "fs.writeFileSync(storagePath,JSON.stringify(storage,null,2));",
       "fs.unlinkSync(metadataPath);",
