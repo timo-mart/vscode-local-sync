@@ -5,11 +5,14 @@ import { readJsonContent, writeJsonContent } from '../file.utils';
 
 type StorageJson = {
   profileAssociations?: unknown;
+  profileAssociationsMigration?: unknown;
   userDataProfiles?: unknown;
+  userDataProfilesMigration?: unknown;
   [key: string]: unknown;
 };
 
 export const ProfilesProviderId = 'profiles';
+export const PendingProfilesRestoreFileName = 'local-sync-profiles-restore.json';
 
 export class ProfilesProvider implements DataProvider {
   readonly id = ProfilesProviderId;
@@ -58,17 +61,8 @@ export class ProfilesProvider implements DataProvider {
     }
 
     if (profileMetadata) {
-      const storagePath = this.getStorageJsonPath();
-      const currentStorage = (await readJsonContent<StorageJson>(storagePath)) || {};
-
-      if (profileMetadata.profileAssociations !== undefined) {
-        currentStorage.profileAssociations = profileMetadata.profileAssociations;
-      }
-      if (profileMetadata.userDataProfiles !== undefined) {
-        currentStorage.userDataProfiles = profileMetadata.userDataProfiles;
-      }
-
-      await writeJsonContent(storagePath, currentStorage);
+      await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(this.#userFolder, 'globalStorage'));
+      await writeJsonContent(this.getPendingRestorePath(), profileMetadata);
     }
 
     if (await this.pathExists(source)) {
@@ -94,6 +88,10 @@ export class ProfilesProvider implements DataProvider {
     return vscode.Uri.joinPath(this.#userFolder, 'globalStorage', 'storage.json');
   }
 
+  private getPendingRestorePath() {
+    return vscode.Uri.joinPath(this.#userFolder, 'globalStorage', PendingProfilesRestoreFileName);
+  }
+
   private getProfileMetadata(storageJson: StorageJson | undefined): StorageJson | undefined {
     if (!storageJson) {
       return undefined;
@@ -103,8 +101,14 @@ export class ProfilesProvider implements DataProvider {
     if (storageJson.profileAssociations !== undefined) {
       metadata.profileAssociations = storageJson.profileAssociations;
     }
+    if (storageJson.profileAssociationsMigration !== undefined) {
+      metadata.profileAssociationsMigration = storageJson.profileAssociationsMigration;
+    }
     if (storageJson.userDataProfiles !== undefined) {
       metadata.userDataProfiles = storageJson.userDataProfiles;
+    }
+    if (storageJson.userDataProfilesMigration !== undefined) {
+      metadata.userDataProfilesMigration = storageJson.userDataProfilesMigration;
     }
 
     return Object.keys(metadata).length > 0 ? metadata : undefined;
