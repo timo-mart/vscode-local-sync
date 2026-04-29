@@ -65,8 +65,8 @@ export function activate(context: vscode.ExtensionContext): void {
       vscode.commands.registerCommand('local-sync.openProfileSelector', async () => {
         await profileStatusService.openProfileSelector();
       }),
-      vscode.commands.registerCommand('local-sync.refreshProfileStatus', async () => {
-        await profileStatusService.refresh();
+      vscode.commands.registerCommand('local-sync.refreshProfileStatus', () => {
+        profileStatusService.refresh();
       }),
 
       watchConfigSettings(config => {
@@ -83,7 +83,7 @@ export function activate(context: vscode.ExtensionContext): void {
           void syncService.restore();
         }
         isRestored = true;
-        void profileStatusService.refresh();
+        profileStatusService.refresh();
         return result;
       }),
     ]
