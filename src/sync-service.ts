@@ -24,6 +24,7 @@ export class SyncService {
     this.#extensionFolder = vscode.Uri.joinPath(context.extensionUri, '..', 'extensions.json');
     this.#userFolder = this.getUserfolder(context);
     this.#dataProviders = [
+      new provider.ProfilesProvider(this.#userFolder),
       new provider.SettingsProvider(),
       new provider.KeybindingsProvider(),
       new provider.SnippetsProvider(),
@@ -109,7 +110,13 @@ export class SyncService {
 
   public watchForChanges(): Array<vscode.Disposable> {
     const fileSystemWatcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(this.#userFolder, '{*.json,snippets/*.{json,code-snippets}'),
+      new vscode.RelativePattern(this.#userFolder, '{*.json,snippets/*.{json,code-snippets}}'),
+      false,
+      false,
+      true
+    );
+    const profilesWatcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(this.#userFolder, 'profiles/**'),
       false,
       false,
       true
@@ -134,7 +141,28 @@ export class SyncService {
           this.backupDebounced();
         }
       }),
+      fileSystemWatcher.onDidDelete(() => {
+        if (!this.#isRestoring) {
+          this.backupDebounced();
+        }
+      }),
+      profilesWatcher.onDidCreate(() => {
+        if (!this.#isRestoring) {
+          this.backupDebounced();
+        }
+      }),
+      profilesWatcher.onDidChange(() => {
+        if (!this.#isRestoring) {
+          this.backupDebounced();
+        }
+      }),
+      profilesWatcher.onDidDelete(() => {
+        if (!this.#isRestoring) {
+          this.backupDebounced();
+        }
+      }),
       fileSystemWatcher,
+      profilesWatcher,
     ];
   }
 

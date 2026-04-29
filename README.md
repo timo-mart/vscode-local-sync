@@ -5,6 +5,7 @@ sync your settings to a local directory
 ## Features
 
 - sync settings, extensions, keybindings and snippets in a local folder
+- sync VSCodium profiles, including profile metadata and profile-specific files under `User/profiles`
 
 > share this local folder using [.dotfiles](https://www.atlassian.com/git/tutorials/dotfiles) between machines
 
