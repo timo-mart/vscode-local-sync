@@ -60,11 +60,9 @@ export class ExtensionProvider implements DataProvider {
     return (extensions || []).filter(ext => !ignoredExtensios.includes(ext));
   }
 
-  public async restore({ path, userFolder, dryRun }: DataOptions): Promise<void> {
+  public async restore({ path, dryRun }: DataOptions): Promise<void> {
     const extensions = this.filterIgnoredExtensions(await readJsonContent<Array<string>>(this.getFilepath(path)));
-    const installedExtensions = this.filterIgnoredExtensions(
-      Array.from(new Set([...(await this.getInstalledExtensions()), ...(await this.getProfileExtensionIds(userFolder, path))]))
-    );
+    const installedExtensions = this.filterIgnoredExtensions(await this.getInstalledExtensions());
 
     const missingExtensions = extensions.filter(ext => !installedExtensions.includes(ext));
     const deletedExtensions = this.shouldRemoveExtensions
