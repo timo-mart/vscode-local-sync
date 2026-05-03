@@ -4,7 +4,6 @@ import { DataOptions, DataProvider } from './data-provider';
 import { readJsonContent, writeJsonContent } from '../file.utils';
 import { getConfigSetting } from '../config';
 import {
-  PendingProfilesRestoreDirectoryName,
   ProfileExtensionsBackupFileName,
 } from './profiles-provider';
 
@@ -75,6 +74,7 @@ export class ExtensionProvider implements DataProvider {
     const installedExtensions = this.filterIgnoredExtensions(await this.getInstalledExtensions());
     const profileExtensionMap = await this.getProfileExtensionMap(path);
     const profileSpecificExtensions = new Set(Object.values(profileExtensionMap).flat());
+    const profileInstallTargets = await this.getProfileInstallTargets(profileExtensionMap, userFolder);
 
     const missingExtensions = extensions.filter(ext => !installedExtensions.includes(ext));
     const missingDefaultProfileExtensions = missingExtensions.filter(ext => !profileSpecificExtensions.has(ext));
@@ -92,9 +92,7 @@ export class ExtensionProvider implements DataProvider {
     );
     if (!dryRun) {
       await Promise.all(missingDefaultProfileExtensions.map(ext => this.installExtension(ext, this.#extensionFolder)));
-      await Promise.all(
-        missingProfileExtensions.map(ext => this.installExtension(ext, this.getProfileInstallTarget(ext, profileExtensionMap, userFolder)))
-      );
+      await Promise.all(missingProfileExtensions.map(ext => this.installExtension(ext, profileInstallTargets.get(ext))));
       await Promise.all(deletedExtensions.map(ext => this.deleteExtension(ext)));
     }
   }
@@ -148,24 +146,23 @@ export class ExtensionProvider implements DataProvider {
     return {};
   }
 
-  private getProfileInstallTarget(
-    extensionId: string,
+  private async getProfileInstallTargets(
     profileExtensionMap: ProfileExtensionMap,
     userFolder: vscode.Uri
-  ): vscode.Uri | undefined {
+  ): Promise<Map<string, vscode.Uri>> {
+    const installTargets = new Map<string, vscode.Uri>();
+
     for (const [profileLocation, extensionIds] of Object.entries(profileExtensionMap)) {
-      if (extensionIds.includes(extensionId)) {
-        return vscode.Uri.joinPath(
-          userFolder,
-          'globalStorage',
-          PendingProfilesRestoreDirectoryName,
-          profileLocation,
-          'extensions.json'
-        );
+      const profileDirectory = vscode.Uri.joinPath(userFolder, 'profiles', profileLocation);
+      await vscode.workspace.fs.createDirectory(profileDirectory);
+      const installTarget = vscode.Uri.joinPath(profileDirectory, 'extensions.json');
+
+      for (const extensionId of extensionIds) {
+        installTargets.set(extensionId, installTarget);
       }
     }
 
-    return undefined;
+    return installTargets;
   }
 
   private async readProfileExtensionMapFromProfiles(root: vscode.Uri): Promise<Record<string, Array<string>>> {

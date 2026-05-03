@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as provider from './data-provider';
+import { getConfigSetting } from './config';
 import { readJsonContent, writeJsonContent } from './file.utils';
 import { logger } from './initOutputChannel';
 
@@ -23,6 +24,7 @@ type LockFile = {
   pid: number;
   createdAt: number;
 };
+const ExtensionBackupFileName = 'extension.json';
 
 export class SyncService {
   static readonly PROFILE_METADATA_KEYS = [
@@ -122,9 +124,13 @@ export class SyncService {
           logger.debug(`provider ${dataProvider.id} restore finished`);
         }
         if (shouldFinalizeProfileRestore) {
+          const profileExtensionMap = await this.readProfileExtensionMap(path);
+          const desiredDefaultProfileExtensions = await this.readDefaultProfileExtensionIds(path, profileExtensionMap);
+          await this.syncDefaultProfileExtensionManifest(desiredDefaultProfileExtensions, profileExtensionMap);
+          await this.syncProfileExtensionManifests(this.#userFolder, profileExtensionMap);
           await this.syncProfileExtensionManifests(
             vscode.Uri.joinPath(this.#userFolder, 'globalStorage'),
-            await this.readProfileExtensionMap(path),
+            profileExtensionMap,
             provider.PendingProfilesRestoreDirectoryName
           );
         }
@@ -270,7 +276,7 @@ export class SyncService {
       'const alive=value=>{try{process.kill(value,0);return true;}catch{return false;}};',
       '(async()=>{',
       'while(Number.isFinite(pid)&&alive(pid)){await sleep(500);}',
-      'if(fs.existsSync(stagedProfilesPath)){if(fs.existsSync(targetProfilesPath)){fs.rmSync(targetProfilesPath,{recursive:true,force:true});}fs.mkdirSync(targetProfilesPath,{recursive:true});for(const entry of fs.readdirSync(stagedProfilesPath)){fs.cpSync(`${stagedProfilesPath}/${entry}`,`${targetProfilesPath}/${entry}`,{recursive:true,force:true});}fs.rmSync(stagedProfilesPath,{recursive:true,force:true});}',
+      'if(fs.existsSync(stagedProfilesPath)){fs.mkdirSync(targetProfilesPath,{recursive:true});const stagedEntries=new Set(fs.readdirSync(stagedProfilesPath));for(const entry of fs.readdirSync(targetProfilesPath)){if(!stagedEntries.has(entry)){fs.rmSync(`${targetProfilesPath}/${entry}`,{recursive:true,force:true});}}for(const entry of stagedEntries){fs.cpSync(`${stagedProfilesPath}/${entry}`,`${targetProfilesPath}/${entry}`,{recursive:true,force:true});}fs.rmSync(stagedProfilesPath,{recursive:true,force:true});}',
       'if(fs.existsSync(metadataPath)){const metadata=JSON.parse(fs.readFileSync(metadataPath,"utf8"));let storage={};try{storage=JSON.parse(fs.readFileSync(storagePath,"utf8"));}catch{}',
       `for(const key of ${JSON.stringify(SyncService.PROFILE_METADATA_KEYS)}){`,
       'if(Object.prototype.hasOwnProperty.call(metadata,key)){storage[key]=metadata[key];}else{delete storage[key];}}',
@@ -374,6 +380,49 @@ export class SyncService {
     }
   }
 
+  private async syncDefaultProfileExtensionManifest(
+    desiredExtensionIds: Array<string>,
+    profileExtensionMap: ProfileExtensionMap
+  ): Promise<void> {
+    const installedById = await this.readInstalledExtensionManifestEntries([
+      { root: this.#userFolder, profilesDirectoryName: 'profiles' },
+      { root: vscode.Uri.joinPath(this.#userFolder, 'globalStorage'), profilesDirectoryName: provider.PendingProfilesRestoreDirectoryName },
+    ]);
+    const currentDefaultEntries = (await readJsonContent<Array<ExtensionManifestEntry>>(this.#extensionFolder)) ?? [];
+    const profileSpecificExtensions = new Set(Object.values(profileExtensionMap).flat());
+    const ignoredExtensions = new Set(getConfigSetting().get<Array<string>>('ignoreExtensions') || []);
+    const shouldRemoveExtensions = !!getConfigSetting().get<boolean>('removeExtensions');
+    const extensionIdsToKeep = new Set(desiredExtensionIds);
+
+    for (const entry of currentDefaultEntries) {
+      const id = entry.identifier?.id;
+      if (!id) {
+        continue;
+      }
+
+      if (ignoredExtensions.has(id)) {
+        extensionIdsToKeep.add(id);
+        continue;
+      }
+
+      if (!shouldRemoveExtensions && !profileSpecificExtensions.has(id)) {
+        extensionIdsToKeep.add(id);
+      }
+    }
+
+    const reconciledExtensions = Array.from(extensionIdsToKeep)
+      .map(id => {
+        const installed = installedById.get(id);
+        if (!installed) {
+          logger.warn(`default profile extension ${id} is not installed locally; cannot recreate default manifest entry`);
+        }
+        return installed;
+      })
+      .filter((extension): extension is ExtensionManifestEntry => !!extension);
+
+    await writeJsonContent(this.#extensionFolder, reconciledExtensions);
+  }
+
   private async readInstalledExtensionManifestEntries(
     profileRoots: Array<{ root: vscode.Uri; profilesDirectoryName: string }>
   ): Promise<Map<string, ExtensionManifestEntry>> {
@@ -435,6 +484,13 @@ export class SyncService {
     }
 
     return this.readProfileExtensionMapFromProfiles(path);
+  }
+
+  private async readDefaultProfileExtensionIds(path: vscode.Uri, profileExtensionMap: ProfileExtensionMap): Promise<Array<string>> {
+    const desiredExtensions = (await readJsonContent<Array<string>>(vscode.Uri.joinPath(path, ExtensionBackupFileName))) ?? [];
+    const profileSpecificExtensions = new Set(Object.values(profileExtensionMap).flat());
+
+    return desiredExtensions.filter(extensionId => !profileSpecificExtensions.has(extensionId));
   }
 
   private async readProfileExtensionMapFromProfiles(root: vscode.Uri): Promise<ProfileExtensionMap> {
