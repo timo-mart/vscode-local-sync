@@ -45,15 +45,29 @@ export class ExtensionProvider implements DataProvider {
     }
   }
 
-  private async getInstalledExtensions(): Promise<Array<string>> {
+  private async getInstalledExtensions(userFolder?: vscode.Uri): Promise<Array<string>> {
     const extensions = await readJsonContent<Array<VSCodeExtensionsJSON>>(this.#extensionFolder);
+    const installedExtensions = new Set<string>();
 
     if (extensions?.length) {
-      return extensions.map(ext => ext.identifier.id);
+      for (const ext of extensions) {
+        installedExtensions.add(ext.identifier.id);
+      }
+    } else {
+      for (const ext of vscode.extensions.all.filter(
+        (candidate: vscode.Extension<unknown>): candidate is Extension => !(candidate as Extension).packageJSON.isBuiltin
+      )) {
+        installedExtensions.add(`${ext.packageJSON.publisher}.${ext.packageJSON.name}`);
+      }
     }
-    return vscode.extensions.all
-      .filter((ext: Extension) => !ext.packageJSON.isBuiltin)
-      .map((ext: Extension) => `${ext.packageJSON.publisher}.${ext.packageJSON.name}`);
+
+    if (userFolder) {
+      for (const extensionId of await this.getProfileExtensionIds(userFolder, userFolder)) {
+        installedExtensions.add(extensionId);
+      }
+    }
+
+    return Array.from(installedExtensions);
   }
 
   private getFilepath(path: vscode.Uri) {
@@ -71,7 +85,7 @@ export class ExtensionProvider implements DataProvider {
 
   public async restore({ path, userFolder, dryRun }: DataOptions): Promise<void> {
     const extensions = this.filterIgnoredExtensions(await readJsonContent<Array<string>>(this.getFilepath(path)));
-    const installedExtensions = this.filterIgnoredExtensions(await this.getInstalledExtensions());
+    const installedExtensions = this.filterIgnoredExtensions(await this.getInstalledExtensions(userFolder));
     const profileExtensionMap = await this.getProfileExtensionMap(path);
     const profileSpecificExtensions = new Set(Object.values(profileExtensionMap).flat());
     const profileInstallTargets = await this.getProfileInstallTargets(profileExtensionMap, userFolder);
